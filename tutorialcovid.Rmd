@@ -1,0 +1,229 @@
+---
+title: "Funções úteis para organizar dados da COVID-19"
+output: html_notebook
+---
+
+Neste tutorial, escrito por Adriano Belisário para a Escola de Dados, veremos algumas funções úteis para trabalhar com dados da COVID-19 na prática, a partir do repositório da [Johns Hopkins University](https://github.com/CSSEGISandData/COVID-19).
+
+Os códigos estão comentados, de modo a facilitar a compreensão para leigos, porém, no geral vamos assumir conhecimento básico de R. Também utlizaremos o pacote `tidyverse`.
+
+**Atenção:** Tenha cuidado redobrado ao compartilhar conclusões, visualizações e análises sobre dados de saúde pública, especialmente em meio a uma pandemia mundial. O intuito deste tutorial é apenas facilitar o acesso aos dados sobre o novo coronavírus, em especial para jornalistas. Porém, recomendamos uma consulta a especialistas da área, caso você queira utilizar algum achado em uma publicação. 
+
+```{r results='hide'}
+library(tidyverse)
+```
+
+# Importando os dados
+O primeiro passo é baixar os dados e entender a sua estrutura.
+
+```{r}
+
+# Vamos chamar o link com o CSV de "url"
+url = 'https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv'
+
+# Agora, importamos o CSV no R...
+dados = read.csv(url)
+
+#... e o visualizamos
+dados
+```
+
+Você pode navegar pela tabela utilizando a páginação acima. Podemos ver que temos os seguintes campos:
+
+* **Province.State** (província, por exemplo, Guiana Francesa)
+* **Country.Region** (país, por exemplo, França)
+* **Lat** (latitude)
+* **Long** (longitude)
+* **Datas**: e na sequência temos várias datas, registrando a série histórica de cada país. Cada dia é uma coluna.
+
+
+# Filtrando dados
+
+Filtrar os registros é bem fácil. Abaixo, vamos criar um novo conjunto de dados (`df`) filtrando apenas os registros com Espanha e Itália no campo `Country.Region`. 
+
+Depois, vamos excluir as colunas `Province.State`, `Lat` e `Long`, que não nos interessam. 
+
+Repare que podemos selecionar as colunas que não queremos com o sinal de negativo (`-`) com o comando select. Usaremos esse recurso novamente no comando seguinte. E também que a barra em pé (`|`) significa o operador "OU".
+
+```{r}
+df <- dados %>% filter(Country.Region == 'Italy' | Country.Region == 'Spain') %>% 
+  select(-Province.State,-Lat,-Long)
+
+df
+
+```
+
+
+# Transformando colunas em linhas
+
+Para facilitar a análise e visualização dos dados, ao invés de ter várias colunas, vamos criar uma variável (ou uma nova coluna) que contenha o dia e outra que tenha o número de casos. Assim, podemos resumir aquelas várias colunas em apenas duas.
+
+Você pode utilizar diversas funções, como a `gather` ou a `pivot_longer`. Para nosso exemplo, ambas são muitos semelhantes, mas a primeira será descontinuada pela equipe de desenvolvedores, então, recomendamos utilizar a `pivot_longer`. 
+
+Basicamente, precisamos definir três parâmetros para elas realizarem seu trabalho:
+
+* Dados: Quais as colunas serão alvos da transformação? No nosso caso, as que possuem a contagem de casos por dia, ou seja, todas menos a do país. 
+
+* Chave: Como será chamada a variável que guardará o nome das colunas? No nosso caso, "dia".
+
+* Valores: Como será chamada a variável que guardará os valores das células? Vamos nomeá-la de "casos"
+
+Veja abaixo como utilizamos estes parâmetros em ambas as funções.
+
+```{r}
+# Se você não conseguir rodar a função abaixo, talvez precise atualizar o pacote "tidyr"
+# Neste caso, voocê pode rodar o comando install.packages("tidyr") 
+# Ou utilizar a função gather: df %>% gather(dia,casos,-Country.Region)
+
+df <- df %>% pivot_longer(-Country.Region,"dia",values_to = "casos")
+
+df
+```
+
+# Transformando textos em datas
+
+Legal! Agora, precisamos definir que o campo "dia" deve ser encarado como uma data. Repare bem no padrão da data na tabela acima.
+
+Ela é uma sequência de caraceteres (indicado pela sigla "chr" no cabeçalho). A primeira coisa que faremos é tirar este "X" e depois formatar a coluna como data.
+
+Primeiro, vamos usar uma função para substituir (replace) uma sequência de caracteres (string ou str), a função str_replace. Com ela, vamos trocar no campo "dia" do banco de dados "df" qualquer ocorrência de X por uma sequência vazia, Ou seja, na prática, removeremos todos os "X".
+
+Depois, vamos mudar o campo para o formato de data com a função `as.Data`. O ponto logo após o parantêses é o primeiro parâmetro e significa que pegaremos o resultado da operação anterior, ou seja, os números das datas sem o X. Depois, explicitamos o formato data que é mês (%m), dia (%d) e ano (%y) - separados por um ponto.
+
+```{r}
+df$dia <- str_replace(df$dia,"X", "") %>%
+  as.Date(.,format='%m.%d.%y')
+
+# Vamos checar se funcionou vendo o dia mais recente, já no formato correto
+max(df$dia)
+```
+
+Agora, conseguimos visualizar os registros ordenados por data. Repare na tabela abaixo que agora o dia aparece como "date" o/
+
+
+```{r}
+df %>% arrange(dia)
+```
+
+
+# Identificando o dia zero
+
+Uma métrica bastante comum em análise de epidemias é a contagem de quantos dias se passaram desde determinado limar de casos. Isso facilita a comparação de fenômenos que ocorreram em datas distintas. 
+
+Abaixo, vamos adicionar uma nova coluna que conte quantos dias se passaram desde o centésimo caso nos dois países. O primeiro dia que a Itália registrou mais que 100 casos foi dia 23 de fevereiro, enquanto na Espanha foi apenas no dia 2 de março.
+
+```{r}
+df <- df %>% 
+  # A ordem das datas é fundamental, então, vamos ordenar os dados por dia
+  arrange(dia) %>%
+  # E filtra os registros menores que 100. Você pode trocar por qualquer outro valor.
+  # Troque por 0 para pegar todos os dias desde o primeiro caso.
+  filter(casos > 100)  %>%
+  # Então, vamos usar o group_by para que a operação a seguir seja feita para cada país (Country.Region)
+  group_by(Country.Region) %>%
+  # Vamos definir o dia 0 como o menor dia daquele país
+  mutate(dia0 = min(dia))
+
+df
+```
+
+# Contagem de dias
+
+Já sabemos a data de registro e a data do primeiro caso, para cada registro de nossa tabela. Agora, está fácil calcularmos a diferença entre os dias. Assim, podemos analisar como cada país estava uma semana após a passar o limiar do centésimo caso, por exemplo. 
+
+Vamos criar uma nova variável (conta_dia) que vai ser o resultado da diferença entre a data de registro (dia) e o dia 0 (dia0) em dias.
+
+```{r}
+# Vamos adicionar o novo campo
+df$conta_dia <- difftime(df$dia,df$dia0,units = "days")
+
+# E visualizar os dados ordernados por ele
+df %>% arrange(conta_dia) 
+
+```
+
+# Calculando o número de casos novos por dia
+
+Repare que a coluna "casos" traz o total de casos acumulado até a data especificada no campo "dia". Mas e se quisermos saber o número de novos casos por dia?
+
+Vamos criar uma nova coluna chamada `novos_casos`, que será resultado do número de casos do dia menos o número de casos do dia anterior, em cada país.
+
+```{r}
+df <- df %>% 
+  # Vamos remover a coluna day0 pois ela não é mais necessária
+  select(-dia0) %>%
+  # Agrupamos por país
+  group_by(Country.Region) %>% 
+  # Lembrando que nossos casos já estão ordenados por dia
+  # Então, utilizamos a função lag() para retornar o último valor daquela coluna
+  mutate(novos_casos = casos - lag(casos))
+
+df
+
+```
+
+# Calculando o aumento percentual
+
+Vamos incrementar ainda mais. Agora vamos adicionar um novo campo que vai mostrar o aumento percentual no número acumulado de casos confirmados em cada dia.
+
+Para relembrar, para calculá-la, pegamos o número de casos de um dia (`casos`), dividimos pelo total dia anterior (`lag(casos)`), diminuimos por 1 e então multiplicamos por 100 para obter a taxa percentual. E também vamos arredondar o resultado, usando a função `round()`.
+
+
+```{r}
+df <- df %>% mutate(aumento_percent = round((novos_casos/lag(casos)*100)))
+
+df
+```
+
+# Casos por milhão de habitantes
+Ainda que seja amplamente utilizada por órgãos oficias e pela imprensa, alguns especialistas desencorajam o uso de taxas populacionais para avaliação da taxa de contágio nos estágios iniciais de uma pandemia. Isto pois o número de pessoas contagiadas por cada infectada não é alterada pelo tamanho da população, porém, à medida que a epidemia progride este número passa a ser útil. A taxa também pode ser um bom indicador se queremos avaliar o impacto na infra-estrutura de saúde, por exemplo, então, vamos ver como realizá-la. Para se aprofundar mais nesta discussão, vide o [item 4.4.2 deste artigo](https://github.com/paulohubert/covid_discussao/blob/master/comparando_paises_covid.pdf) ou esta matéria do [The New York Times](https://www.nytimes.com/interactive/2020/03/27/upshot/coronavirus-new-york-comparison.html).
+
+Aqui, vamos adicionar uma coluna com a população dos países. Como este é apenas um exemplo e temos só 2 casos, podemos usar uma condicional simples. Se o país for a Itália, inserimos a população de 60 milhões (60483538), se não, então, será a Espanha, que tem população de 46 milhões (46750337).
+
+```{r}
+# 
+df <- df %>% mutate(populacao = ifelse(Country.Region == "Italy",60483538,46750337)) %>%
+  # Uma vez que você insira a coluna de população, o cálculo da taxa é simples
+mutate(taxa = round((casos/populacao) * 1000000))
+
+df
+```
+
+
+# Bônus: plotando o resultado em gráfico
+Este não é um tutorial de visualização de dados, mas depois de chegar aqui nós merecemos ver o resultado do trabalho em um gráfico. Então, vamos lá!
+
+```{r}
+# Vamos usar o tema da The Economist para deixar o gráfico bonito :)
+library(ggthemes)
+
+grafico <- ggplot(df, aes(x=conta_dia,y=casos, group = Country.Region, colour = Country.Region)) + 
+  geom_line() +
+  theme_economist_white() +
+  labs(caption = "Gráfico: Escola de Dados \n Dados: John Hopkins") +
+    labs(x = "Dias desde o centésimo caso", y = "Total de casos",
+         title = "Evolução dos casos confirmados de COVID-19") 
+
+grafico
+```
+
+## Bônus extra: escala logarítimica
+
+Mais um bônus: agora, vamos plotar o mesmo gráfico, mas com escala logarítimica. Basta adicionar o comando `+ scale_y_log10()`.
+
+Repare como as duas escalas permitem análises diferentes.
+
+```{r}
+grafico <- ggplot(df, aes(x=as.double(conta_dia),y=taxa, group = Country.Region, colour = Country.Region)) + 
+  geom_line() +
+  theme_economist_white() +
+  labs(caption = "Gráfico: Escola de Dados \n Dados: John Hopkins") +
+    labs(x = "Dias desde o centésimo caso", y = "Total de casos",
+         title = "Evolução dos casos confirmados de COVID-19",
+         subtitle = "Com escala logarítimica") + scale_y_log10()
+
+grafico 
+```
+
+
+
